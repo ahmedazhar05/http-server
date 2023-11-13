@@ -1,3 +1,4 @@
 *
-!/python.http.server.sh
+!/server.sh
 !/.gitignore
+!/README.md
