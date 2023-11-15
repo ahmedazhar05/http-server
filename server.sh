@@ -1,7 +1,7 @@
-#!/bin/bash
+#!/bin/sh
 
-log_prefix=
 stay_quiet=0
+SERVER=Shell-HTTP/1.0.0 # Bash/101
 
 # this function reads the header lines from the piped input and formats it into JSON data
 parse_headers() {
@@ -83,10 +83,13 @@ parse_query_params() {
 }
 
 list_directory_contents() {
-    items=`ls -qgohapN --group-directories-first --time-style=long-iso "$1" | 
+    items=`ls -qgohApN --group-directories-first --time-style=long-iso "$1" | 
     sed -E '
     # delete the first line that outputs the total
     1d;
+
+    # deletes files that are anything other than regular-files or directories (e.g. pipe files)
+    /^[^d-]/d;
 
     # replace all the quotation marks with its equivalent html-symbol-entity: &quot;
     s/"/\&quot;/g;
@@ -94,14 +97,14 @@ list_directory_contents() {
     # if the entry ends with a slash(/) then it is a directory
     /\/$/{
         # format all the directorie/folder entries as an html-table row with the folder icon
-        s/[^ ]+ +[^ ]+ +([^ ]+) +([^ ]+) +([^ ]+) +(.+)\//<tr><td><svg width="15" height="15" viewBox="0 0 16 16"><path fill="#dbb065" d="M0.5 13.5L0.5 1.5 4.793 1.5 6.793 3.5 15.5 3.5 15.5 13.5z"><\/path><path fill="#967a44" d="M4.586,2l1.707,1.707L6.586,4H7h8v9H1V2H4.586 M5,1H0v13h16V3H7L5,1L5,1z"><\/path><g><path fill="#f5ce85" d="M0.5 14.5L0.5 4.5 5.118 4.5 7.118 3.5 15.5 3.5 15.5 14.5z"><\/path><path fill="#967a44" d="M15,4v10H1V5h4h0.236l0.211-0.106L7.236,4H15 M16,3H7L5,4H0v11h16V3L16,3z"><\/path><\/g><\/svg><\/td><td><strong><a href="\4\/">\4\/<\/a><\/strong><\/td><td>\2 \3<\/td><td><\/td><\/tr>/;
+        s/[^ ]+ +[^ ]+ +([^ ]+) +([^ ]+) +([^ ]+) +(.+)\//<tr class="directory"><td><a href="\4\/">\4\/<\/a><\/td><td>\2 \3<\/td><td><\/td><\/tr>/;
 
         # stop processing the script any further and move on with the new entry/line
         b
     };
 
     # format all the file entries as an html-table row with the file icon
-    s/[^ ]+ +[^ ]+ +([^ ]+) +([^ ]+) +([^ ]+) +(.+)/<tr><td><svg width="15" height="15" viewBox="4 4 40 40"><path d="M 12.5 4 C 10.032499 4 8 6.0324991 8 8.5 L 8 39.5 C 8 41.967501 10.032499 44 12.5 44 L 35.5 44 C 37.967501 44 40 41.967501 40 39.5 L 40 18.5 A 1.50015 1.50015 0 0 0 39.560547 17.439453 L 39.544922 17.423828 L 26.560547 4.4394531 A 1.50015 1.50015 0 0 0 25.5 4 L 12.5 4 z M 12.5 7 L 24 7 L 24 15.5 C 24 17.967501 26.032499 20 28.5 20 L 37 20 L 37 39.5 C 37 40.346499 36.346499 41 35.5 41 L 12.5 41 C 11.653501 41 11 40.346499 11 39.5 L 11 8.5 C 11 7.6535009 11.653501 7 12.5 7 z M 27 9.1210938 L 34.878906 17 L 28.5 17 C 27.653501 17 27 16.346499 27 15.5 L 27 9.1210938 z"><\/path><\/svg><\/td><td><strong><a href="\4">\4<\/a><\/strong><\/td><td>\2 \3<\/td><td>\1<\/td><\/tr>/
+    s/[^ ]+ +[^ ]+ +([^ ]+) +([^ ]+) +([^ ]+) +(.+)/<tr class="file"><td><a href="\4">\4<\/a><\/td><td>\2 \3<\/td><td>\1<\/td><\/tr>/
     '`
 
     cat <<EOF
@@ -115,9 +118,28 @@ list_directory_contents() {
         <style> 
             table { min-width: max-content; } 
             body { font-family: monospace; } 
-            td, th { padding: 0 35px; } 
-            td:first-child, th:first-child { padding: 0 12px; }
-            td:nth-child(2), th:nth-child(2), td:last-child, th:last-child { padding: 0; }
+            td:first-child { display: flex; }
+            td:nth-child(2), th:nth-child(2) { padding-left: 35px; padding-right: 35px; } 
+            a { font-weight: bold; }
+            tr > td:first-child::before {
+                content: "";
+                width: 15px;
+                height: 15px;
+                display: inline-block;
+                padding: 0 12px;
+                background-repeat: no-repeat;
+                background-position: center;
+                background-size: contain;
+            }
+            tr.directory > td:first-child::before {
+                background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='15' height='15' viewBox='0 0 16 16'%3E%3Cpath fill='%23dbb065' d='M0.5 13.5L0.5 1.5 4.793 1.5 6.793 3.5 15.5 3.5 15.5 13.5z'%3E%3C/path%3E%3Cpath fill='%23967a44' d='M4.586,2l1.707,1.707L6.586,4H7h8v9H1V2H4.586 M5,1H0v13h16V3H7L5,1L5,1z'%3E%3C/path%3E%3Cg%3E%3Cpath fill='%23f5ce85' d='M0.5 14.5L0.5 4.5 5.118 4.5 7.118 3.5 15.5 3.5 15.5 14.5z'%3E%3C/path%3E%3Cpath fill='%23967a44' d='M15,4v10H1V5h4h0.236l0.211-0.106L7.236,4H15 M16,3H7L5,4H0v11h16V3L16,3z'%3E%3C/path%3E%3C/g%3E%3C/svg%3E");
+            }
+            tr.file > td:first-child::before {
+                background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='15' height='15' viewBox='4 4 40 40'%3E%3Cpath d='M 12.5 4 C 10.032499 4 8 6.0324991 8 8.5 L 8 39.5 C 8 41.967501 10.032499 44 12.5 44 L 35.5 44 C 37.967501 44 40 41.967501 40 39.5 L 40 18.5 A 1.50015 1.50015 0 0 0 39.560547 17.439453 L 39.544922 17.423828 L 26.560547 4.4394531 A 1.50015 1.50015 0 0 0 25.5 4 L 12.5 4 z M 12.5 7 L 24 7 L 24 15.5 C 24 17.967501 26.032499 20 28.5 20 L 37 20 L 37 39.5 C 37 40.346499 36.346499 41 35.5 41 L 12.5 41 C 11.653501 41 11 40.346499 11 39.5 L 11 8.5 C 11 7.6535009 11.653501 7 12.5 7 z M 27 9.1210938 L 34.878906 17 L 28.5 17 C 27.653501 17 27 16.346499 27 15.5 L 27 9.1210938 z'%3E%3C/path%3E%3C/svg%3E");
+            }
+            tr.parent > td:first-child::before {
+                background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='15' height='15' viewBox='-1 -1 18 18'%3E%3Cpath d='M4.854 1.146a.5.5 0 0 0-.708 0l-4 4a.5.5 0 1 0 .708.708L4 2.707V12.5A2.5 2.5 0 0 0 6.5 15h8a.5.5 0 0 0 0-1h-8A1.5 1.5 0 0 1 5 12.5V2.707l3.146 3.147a.5.5 0 1 0 .708-.708l-4-4z' stroke-width='2' stroke='blue'%3E%3C/path%3E%3C/svg%3E");
+            }
         </style>
     </head>
     <body>
@@ -126,17 +148,18 @@ list_directory_contents() {
         <table>
             <thead>
                 <tr>
-                    <th></th>
                     <th>Name</th>
                     <th>Last Modified</th>
                     <th>Size</th>
                 </tr>
             </thead>
             <tbody>
+`[ "$1" != "./" ] && echo '<tr class="parent"><td><a href="../">Parent Directory</a></td><td></td><td></td></tr>'`
 $items
             </tbody>
         </table>
         <hr>
+        <footer><p><i>$SERVER (`uname -o`) Netcat/`nc -V | sed 's/.* //; q'` Server at $loopback_address Port $port</i></p></footer>
     </body>
 </html>
 EOF
@@ -287,9 +310,86 @@ file_not_found_page() {
         The requested resource at URL <strong>${1:1}</strong> was not found on this server.
         </p>
         <hr>
+        <footer><p><i>$SERVER (`uname -o`) Netcat/`nc -V | sed 's/.* //; q'` Server at $loopback_address Port $port</i></p></footer>
     </body>
 </html>
 EOF
+}
+
+unsupported_method_response() {
+    content='<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <title>Error 501 Unsupported Method</title>
+    </head>
+    <body>
+        <h1>Unsupported Method</h1>
+        <hr>
+        <p>
+        Error code: <strong>501</strong>
+        <br>
+        Message: <strong>'"'$1'"' Method Not Implemented</strong>
+        <br>
+        <br>
+        The server does not support this method.
+        </p>
+        <hr>
+        <footer><p><i>'"$SERVER (`uname -o`) Netcat/`nc -V | sed 's/.* //; q'` Server at $loopback_address Port $port"'</i></p></footer>
+    </body>
+</html>'
+
+    cat <<EOF
+Server: $SERVER
+Date: `date --utc +'%a, %d %b %Y %T GMT'`
+Content-type: text/html
+Content-Length: ${#content}
+
+$content
+EOF
+    return 501
+}
+
+serve_static() {
+    echo "Server: $SERVER"
+    echo "Date:" `date --utc +'%a, %d %b %Y %T GMT'`
+
+    if [ -f "$1" ] && [ -r "$1" ]
+    then
+        echo "Content-type:" `obtain_mime "$1"`
+        echo "Content-Length:" `wc --bytes < "$1"`
+        echo "Last-Modified:" `stat -c @%Y "$1" | xargs date --utc +'%a, %d %b %Y %T GMT' -d`
+        echo
+        cat "$1"
+    elif [ -d "$1" ]
+    then
+        echo "Content-type: text/html"
+
+        if [ -f "${1%/}/index.html" ]
+        then
+            echo "Content-Length:" `wc --bytes < "${1%/}"/index.html`
+            echo
+            cat "${1%/}"/index.html
+        elif [ -f "${1%/}/index.htm" ]
+        then
+            echo "Content-Length:" `wc --bytes < "${1%/}"/index.htm`
+            echo
+            cat "${1%/}"/index.htm
+        else
+            content=`list_directory_contents "$1"`
+            echo "Content-Length:" `wc --bytes <<<"$content"`
+            echo -e "\n$content"
+        fi
+    else
+        content=`file_not_found_page "$1"`
+        echo "Content-type: text/html"
+        echo "Content-Length:" `wc --bytes <<<"$content"`
+        echo -e "\n$content"
+        return 404
+    fi
+    return 200
 }
 
 request_handler() {
@@ -297,57 +397,44 @@ request_handler() {
 
     # cleaning up the protocol value from any trailing carriage return ('\r') symbols
     protocol=${protocol%%$'\r'}
-
     fs_path=.`url_decode "$raw_path"`
-    query_params=`parse_query_params "$fs_path"`
 
-    # removing the query parameters (if it exists) from the path otherwise setting it to an empty object
-    [ ${#query_params} -gt 0 ] && fs_path="${fs_path%%\?*}" || query_params='{}'
-
-    request_headers=`parse_headers`
-
-    response_code=200
-    mime=text/html
-    if [ -f "$fs_path" ] && [ -r "$fs_path" ]
+    response_file="`mktemp --tmpdir="$SERVER_DIR" responseXXXXXXXXXX`"
+    if [ $is_cgi -eq 0 ]
     then
-        content=`cat "$fs_path"`
-        mime=`obtain_mime "$fs_path"`
-    elif [ -d "$fs_path" ]
-    then
-        if [ -f "${fs_path%/}/index.html" ]
+        if [ "$method" = "GET" ]
         then
-            content=`cat "${fs_path%/}"/index.html`
-        elif [ -f "${fs_path%/}/index.htm" ]
-        then
-            content=`cat "${fs_path%/}"/index.htm`
+            serve_static "${fs_path%%\?*}" > "$response_file"
         else
-            content=`list_directory_contents "$fs_path"`
+            unsupported_method_response "$method" > "$response_file"
         fi
     else
-        content=`file_not_found_page "$fs_path"`
-        response_code=404
+        query_params=`parse_query_params "$fs_path"`
+        # removing the query parameters (if it exists) from the path otherwise setting it to an empty object
+        [ ${#query_params} -gt 0 ] && fs_path="${fs_path%%\?*}" || query_params='{}'
+
+        request_headers=`parse_headers`
+
+        # call the script here
     fi
+    # ([ "$method" = "GET" ] && serve_static "$fs_path" || unsupported_method_response "$method") > "$response_file"
+    response_status=$?
 
-    # mime=application/json
-    # content="{${spacers[nl]}${spacers[t1]}\"method\":${spacers[sp]}\"$method\",${spacers[nl]}${spacers[t1]}\"protocol\":${spacers[sp]}\"$protocol\",${spacers[nl]}${spacers[t1]}\"raw_path\":${spacers[sp]}\"$raw_path\",${spacers[nl]}${spacers[t1]}\"path\":${spacers[sp]}\"${fs_path#.}\",${spacers[nl]}${spacers[t1]}\"time\":${spacers[sp]}\"`date --utc +'%FT%T.000Z'`\",${spacers[nl]}${spacers[t1]}\"query_params\":${spacers[sp]}$query_params,${spacers[nl]}${spacers[t1]}\"request_headers\":${spacers[sp]}$request_headers${spacers[nl]}}"
+    # sending the HTTP version header along with the whole response
+    echo "HTTP/1.0 ${status_codes[$response_status]}" | cat - "$response_file" > "$SERVER_DIR"/http_response
 
-    
-    content_length=`wc --bytes <<<"$content"` # "${#content}" is not applicable here are as the content may contain certain characters that are composed of 2 or more bytes
-    content_length=$((content_length - 1)) # decremented by one because bash's here-string adds an extra unnecessary newline at the end which is not actually there in the original `content`
-
-    response="Server: Bash/101\nDate: $time_now\nContent-Length: $content_length\nContent-type: $mime\n\n$content"
+    response_size=`wc --bytes < "$response_file"`
+    rm -f "$response_file"
 
     # logfile format inspired by https://github.com/python/cpython/blob/main/Lib/http/server.py#L58,L78
-    [ $stay_quiet -eq 0 ] && printf '%s [%s %s] "%s %s %s" %d %d\n' "$log_prefix" `date +"%d/%b/%Y %T"` "$method" "$raw_path" "$protocol" $response_code `wc --bytes <<<"$response"` # ${#response}
-
-    echo -e "HTTP/1.0 $response_code ${response_status[$response_code]}\n$response" > http_response
+    [ $stay_quiet -eq 0 ] && printf '%s [%s %s] "%s %s %s" %d %d\n' "$log_prefix" `date +"%d/%b/%Y %T"` "$method" "$raw_path" "$protocol" "${status_codes[$response_status]%% *}" ${response_size:--}
 }
 
 # defining the CommandLine Interface options and flags
 # refer to getopt example at /usr/share/doc/util-linux/getopt-example.bash and getopt manual
 TEMP=`getopt --options 'hb:cd:qt:' --long 'help,bind:,compact,directory:,quiet,tab-width:' --name "$0" -- "$@"`
 
-[ $? -ne 0 ] && echo "USAGE: $0 [-h | --help] [-b ADDRESS | --bind=ADDRESS] [-q | --quiet] [-c | --compact] [-d DIRECTORY | --directory=DIRECTORY] [-t WIDTH | --tab-width=WIDTH] [PORT]" >&2 && exit 1
+[ $? -ne 0 ] && echo "USAGE: $0 [-h | --help] [-b ADDRESS | --bind=ADDRESS] [-c | --compact] [-d DIRECTORY | --directory=DIRECTORY] [-q | --quiet] [-t WIDTH | --tab-width=WIDTH] [PORT]" >&2 && exit 1
 
 eval set -- "$TEMP"
 unset TEMP
@@ -356,10 +443,6 @@ unset TEMP
 declare -A spacers=(
     [nl]=$'\n' # newline
     [sp]=' '   # space
-)
-declare -A response_status=(
-    [200]="OK"
-    [404]="Not Found"
 )
 declare -A status_codes=(
     [8]="520 Web Server Returned an Unknown Error"
@@ -459,6 +542,15 @@ declare -A status_codes=(
     [253]="509 Bandwidth Limit Exceeded"
     [254]="510 Not Extended"
     [255]="511 Network Authentication Required"
+    
+    # [164]="420 Enhance Your Calm",
+    # [243]="499 Token Required",
+    # [195]="451 Redirect",
+    # [18]="530",
+    # [204]="460",
+    # [207]="463",
+    # [208]="464",
+    # [49]="561 Unauthorized"
 )
 tab_width=2
 addr=
@@ -468,8 +560,8 @@ while true; do
         "-h"|"--help")
             indent="        `printf "%${#0}.s"`"
             cat <<EOF
-USAGE: $0 [-h | --help] [-b ADDRESS | --bind=ADDRESS] [-q | --quiet]
-$indent[-c | --compact] [-d DIRECTORY | --directory=DIRECTORY]
+USAGE: $0 [-h | --help] [-b ADDRESS | --bind=ADDRESS] [-c | --compact]
+$indent[-d DIRECTORY | --directory=DIRECTORY] [-q | --quiet]
 $indent[-t WIDTH | --tab-width=WIDTH] [PORT]
 
 positional arguments:
@@ -554,15 +646,15 @@ do
 done
 
 port=${1:-4000}
-
 # checking if port number is a digit and if it is in a valid range of [0-65535]
-! ([ -n "$(grep -Px '\d+' <<<$port)" ] && [ $port -ge 0 ] && [ $port -lt `bc <<<2^16` ]) && echo "$0: invalid port number provided: $1" >&2 && exit 1
+! ((! [[ "$port" =~ [^0-9] ]]) && [ $port -ge 0 ] && [ $port -lt 65536 ]) && echo "$0: invalid port number provided: $1" >&2 && exit 1
 
 # fetching loopback address to use in the logfile output
 loopback_address=`ip -br address | grep ^lo | grep -Po '(\d+\.){3}\d+'`
+loopback_address=${loopback_address:-127.0.0.1}
 
 # generating the prefix string to output as logs
-log_prefix="${loopback_address:-127.0.0.1} `compgen -c identd > /dev/null && identd || echo -` `[ $EUID -eq $(id -u) ] && echo - || id -nu`"
+log_prefix="$loopback_address `command -p identd 2> /dev/null || echo -` `[ $EUID -eq $(id -u) ] && echo - || id -nu`"
 
 [ $stay_quiet -eq 0 ] && echo -e "Listening on port $port (http://${addr:-0.0.0.0}:$port/)...\n"
 
@@ -1537,10 +1629,15 @@ video/x-sgi-movie=movie
 video/x-smv=smv
 x-conference/x-cooltalk=ice'
 
+# making a temporary directory for storing intermediate files
+SERVER_DIR="`mktemp --directory http_serverXXX --tmpdir`"
+
 # making a named pipe file if not already created, for sending responses
-[ -p http_response ] || mkfifo http_response
+[ -p "$SERVER_DIR"/http_response ] || mkfifo "$SERVER_DIR"/http_response
+# [ -p "$SERVER_DIR"/http_response* ] || mktemp --dry-run --tmpdir="$SERVER_DIR" http_responseXXX | xargs mkfifo # creates a new and most likely a unique pipe which is not needed
 
 keep_running=1
+is_cgi=0
 
 cleanup() {
     # this will gracefully stop the while loop
@@ -1549,18 +1646,18 @@ cleanup() {
     # finding the netcat process and abruptly killing it, hence killing the server
     pkill -SIGTERM -fx "nc --listen --local-port=$port${addr:+ $addr}"
 
-    # removing the named pipe from the file system
-    rm -f http_response
+    # removing the temporary server directory from the file system
+    rm -rf "$SERVER_DIR"
     
     [ $stay_quiet -eq 0 ] && echo -e "\r   \nKeyboard interrupt received, stopping the server."
     exit 0
 }
 
-# listening for bash termination signals (SIGINT & SIGTERM), so as to make sure to `cleanup` before terminating the program
+# listening for bash termination signals (SIGINT & SIGTERM), so as to make sure to `cleanup` before terminating this script
 trap cleanup SIGINT SIGTERM
 
 # start the server indefinitely unless termination signals are trapped
 while [ $keep_running -eq 1 ]
 do
-    cat http_response | nc --listen --local-port=$port $addr | request_handler
+    cat "$SERVER_DIR"/http_response | nc --listen --local-port=$port $addr | request_handler
 done
