@@ -292,7 +292,10 @@ obtain_mime() {
     echo -n "$potential_mime"
 }
 
-file_not_found_page() {
+# USAGE: show_error_page <http status code> <message> <information>
+show_error_page() {
+    code=$1
+    status="${status_codes[$(( code % 256 ))]}"
     cat <<EOF
 <!DOCTYPE html>
 <html>
@@ -300,18 +303,18 @@ file_not_found_page() {
         <meta charset="utf-8">
         <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
         <meta http-equiv="X-UA-Compatible" content="IE=edge">
-        <title>Error 404 Not Found</title>
+        <title>Error $status</title>
     </head>
     <body>
-        <h1>Not Found</h1>
+        <h1>${status#* }</h1>
         <hr>
         <p>
-        Error code: <strong>404</strong>
+        Error code: <strong>$code</strong>
         <br>
-        Message: <strong>File Not Found</strong>
+        Message: <strong>$2</strong>
         <br>
         <br>
-        The requested resource at URL <strong>${1:1}</strong> was not found on this server.
+        $3
         </p>
         <hr>
         <footer><p><i>$SERVER (`uname -o`) Netcat/`nc -V | sed 's/.* //; q'` Server at $loopback_address Port $port</i></p></footer>
@@ -320,30 +323,14 @@ file_not_found_page() {
 EOF
 }
 
+# USAGE: file_not_found_page <resource/file path>
+file_not_found_page() {
+    show_error_page 404 "File Not Found" "The requested resource at URL <strong>${1:1}</strong> was not found on this server."
+}
+
+# USAGE: unsupported_method_response <http method>
 unsupported_method_response() {
-    content='<!DOCTYPE html>
-<html>
-    <head>
-        <meta charset="utf-8">
-        <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-        <meta http-equiv="X-UA-Compatible" content="IE=edge">
-        <title>Error 501 Unsupported Method</title>
-    </head>
-    <body>
-        <h1>Unsupported Method</h1>
-        <hr>
-        <p>
-        Error code: <strong>501</strong>
-        <br>
-        Message: <strong>'"'$1'"' Method Not Implemented</strong>
-        <br>
-        <br>
-        The server does not support this method.
-        </p>
-        <hr>
-        <footer><p><i>'"$SERVER (`uname -o`) Netcat/`nc -V | sed 's/.* //; q'` Server at $loopback_address Port $port"'</i></p></footer>
-    </body>
-</html>'
+    content="`show_error_page 501 "\"$1\" Method Not Implemented" 'The server does not support this method.'`"
 
     cat <<EOF
 Content-type: text/html
