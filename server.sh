@@ -1,7 +1,7 @@
 #!/bin/sh
 
 stay_quiet=0
-SERVER=Shell-HTTP/1.0.0 # Bash/101
+SERVER=Shell-HTTP/1.0.0
 
 # this function reads the header lines from the piped input and formats it into JSON data
 parse_headers() {
@@ -27,6 +27,7 @@ parse_headers() {
 }
 
 # this function extracts the query-string from the path value and formats it into JSON data
+# USAGE: parse_query_params <decoded request url>
 parse_query_params() {
     tmp="$1?"
     tmp="${tmp#*\?}"
@@ -82,6 +83,7 @@ parse_query_params() {
     fi
 }
 
+# USAGE: list_directory_contents <directory path>
 list_directory_contents() {
     items=`ls -qgohApN --group-directories-first --time-style=long-iso "$1" | 
     sed -E '
@@ -168,6 +170,7 @@ EOF
 # this function performs the same operation as does the `decodeURI` function in JavaScript
 # (https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/decodeURI)
 # Algorithm source: https://en.wikipedia.org/wiki/UTF-8#Encoding
+# USAGE: url_decode <raw request url>
 url_decode() {
     declare -A hex_to_bin=(
         [0]=0000
@@ -271,6 +274,7 @@ url_decode() {
     echo -en "$decoded_url"
 }
 
+# USAGE: obtain_mime <file path>
 obtain_mime() {
     filename="${1##*/}"
     extension="${filename##*.}"
@@ -342,8 +346,6 @@ unsupported_method_response() {
 </html>'
 
     cat <<EOF
-Server: $SERVER
-Date: `date --utc +'%a, %d %b %Y %T GMT'`
 Content-type: text/html
 Content-Length: ${#content}
 
@@ -352,10 +354,8 @@ EOF
     return 501
 }
 
+# USAGE: serve_static <resource url>
 serve_static() {
-    echo "Server: $SERVER"
-    echo "Date:" `date --utc +'%a, %d %b %Y %T GMT'`
-
     if [ -f "$1" ] && [ -r "$1" ]
     then
         echo "Content-type:" `obtain_mime "$1"`
@@ -400,13 +400,21 @@ request_handler() {
     fs_path=.`url_decode "$raw_path"`
 
     response_file="`mktemp --tmpdir="$SERVER_DIR" responseXXXXXXXXXX`"
+
+    # adding common headers
+    cat <<EOF > "$response_file"
+Server: $SERVER
+Date: `date --utc +'%a, %d %b %Y %T GMT'`
+Connection: close
+EOF
+
     if [ $is_cgi -eq 0 ]
     then
         if [ "$method" = "GET" ]
         then
-            serve_static "${fs_path%%\?*}" > "$response_file"
+            serve_static "${fs_path%%\?*}" >> "$response_file"
         else
-            unsupported_method_response "$method" > "$response_file"
+            unsupported_method_response "$method" >> "$response_file"
         fi
     else
         query_params=`parse_query_params "$fs_path"`
@@ -417,7 +425,7 @@ request_handler() {
 
         # call the script here
     fi
-    # ([ "$method" = "GET" ] && serve_static "$fs_path" || unsupported_method_response "$method") > "$response_file"
+    # ([ "$method" = "GET" ] && serve_static "$fs_path" || unsupported_method_response "$method") >> "$response_file"
     response_status=$?
 
     # sending the HTTP version header along with the whole response
@@ -444,6 +452,10 @@ declare -A spacers=(
     [nl]=$'\n' # newline
     [sp]=' '   # space
 )
+
+# source: https://en.wikipedia.org/wiki/List_of_HTTP_status_codes
+# the keys are the 8 least-significant-bits of the status code
+# or you can say, key = status_code % 256
 declare -A status_codes=(
     [8]="520 Web Server Returned an Unknown Error"
     [9]="521 Web Server Is Down"
@@ -543,6 +555,7 @@ declare -A status_codes=(
     [254]="510 Not Extended"
     [255]="511 Network Authentication Required"
     
+    # Extra non-included key/values which were overlapping:
     # [164]="420 Enhance Your Calm",
     # [243]="499 Token Required",
     # [195]="451 Redirect",
