@@ -1,54 +1,63 @@
 #!/bin/sh
+#
+# Listen for HTTP requests and serve an HTTP response back to the client
 
 stay_quiet=0
-SERVER=Shell-HTTP/1.0.0
+readonly SERVER="Shell-HTTP/1.0.0"
 
-# this function reads the header lines from the piped input and formats it into JSON data
+#######################################
+# Reads and parses the headers of an HTTP request inputted through a pipe
+# Globals:
+#   spacers
+# Outputs:
+#   JSON representation of the headers
+#######################################
 parse_headers() {
     request_headers_json="[${spacers[nl]}"
 
     # reading headers
-    while read header_line
-    do
+    while read header_line; do
         # request lines are separated by a carriage return ('\r') instead of a line-feed ('\n') so removing the trailing '\r's
         header="${header_line%%$'\r'}"
 
         # if the header is empty/blank line then that means all the headers have been read
-        ([ -z "$header" ] || [ "$header" = "" ] || [ ${#header} -eq 0 ]) && break
+        ([[ -z "${header}" ]] || [[ "${header}" == "" ]] || (( ${#header} == 0 ))) && break
 
         # backslash-escaping all the quotation marks, i.e. from '"' to '\"'
         header="${header//\"/\\\"}"
 
-        request_headers_json="$request_headers_json${spacers[t2]}[${spacers[nl]}${spacers[t3]}\"${header/: /\",${spacers[nl]}${spacers[t3]}\"}\"${spacers[nl]}${spacers[t2]}],${spacers[nl]}" # output: [["Content-Type","application/json"], ...]
-        #request_headers_json="$request_headers_json${spacers[t2]}{${spacers[nl]}${spacers[t3]}\"name\":${spacers[sp]}\"${header/: /\",${spacers[nl]}${spacers[t3]}\"value\":${spacers[sp]}\"}\"${spacers[nl]}${spacers[t2]}},${spacers[nl]}" # output: [{"name":"Content-Type","value":"application/json"}, ...]
+        request_headers_json="${request_headers_json}${spacers[t2]}[${spacers[nl]}${spacers[t3]}\"${header/: /\",${spacers[nl]}${spacers[t3]}\"}\"${spacers[nl]}${spacers[t2]}],${spacers[nl]}" # output: [["Content-Type","application/json"], ...]
+        #request_headers_json="${request_headers_json}${spacers[t2]}{${spacers[nl]}${spacers[t3]}\"name\":${spacers[sp]}\"${header/: /\",${spacers[nl]}${spacers[t3]}\"value\":${spacers[sp]}\"}\"${spacers[nl]}${spacers[t2]}},${spacers[nl]}" # output: [{"name":"Content-Type","value":"application/json"}, ...]
     done
 
     echo -n "${request_headers_json%,${spacers[nl]}}${spacers[nl]}${spacers[t1]}]"
 }
 
-# this function extracts the query-string from the path value and formats it into JSON data
-# USAGE: parse_query_params <decoded request url>
+
+#######################################
+# Parses the query string from the request URL
+# Globals:
+#   spacers
+# Arguments:
+#   Percent-decoded request URL
+# Outputs:
+#   JSON representation of the query parameters
+#######################################
 parse_query_params() {
     tmp="$1?"
     tmp="${tmp#*\?}"
     query_string="${tmp%?}"
 
-    if [ ${#query_string} -gt 0 ]
-    then
-        # tmp="${query_string//=/\":${spacers[sp]}\"}"
-        # query_params_json="${tmp//&/\",${spacers[nl]}${spacers[t2]}\"}"
-
+    if (( ${#query_string} > 0 )); then
         declare -A params
-        while read -d'&' line
-        do
-            # when the value in the key-value pair is an array (php query params array notation), i.e. when the $line matches '[]=' regular expression
-            if [[ "$line" =~ "[]=" ]]
-            then
+        while read -d'&' line; do
+            # when the value in the key-value pair is an array (php query params array notation), i.e. when the ${line} matches '[]=' regular expression
+            if [[ "${line}" =~ "[]=" ]]; then
                 key="${line%[]=*}"
 
                 # fetching the value of the key from the associative array, if already declared
                 # if no value is declared then initializing it with a '['
-                previous_value="${params[$key]:-[${spacers[nl]}}"
+                previous_value="${params[${key}]:-[${spacers[nl]}}"
 
                 # substituting the trailing bracket ']' (if it exists) with a comma ','
                 previous_value="${previous_value/%${spacers[nl]}${spacers[t2]}]/,${spacers[nl]}}"
@@ -59,53 +68,63 @@ parse_query_params() {
                 # escaping all the quotation marks
                 new_value="${new_value//\"/\\\"}"
 
-                new_value="${spacers[t3]}\"$new_value\"${spacers[nl]}${spacers[t2]}]"
+                new_value="${spacers[t3]}\"${new_value}\"${spacers[nl]}${spacers[t2]}]"
 
-                params["$key"]="$previous_value$new_value"
+                params["${key}"]="${previous_value}${new_value}"
             else
                 key="${line%=*}"
                 value="${line#*=}"
                 # escaping all the quotation marks
                 value="${value//\"/\\\"}"
                 # also replacing replacing '+' with ' '
-                params["$key"]="\"${value//+/ }\""
+                params["${key}"]="\"${value//+/ }\""
             fi
-        done <<<"$query_string&"
+        done <<<"${query_string}&"
 
         query_params_json="{${spacers[nl]}"
 
-        for key in "${!params[@]}"
-        do
-            query_params_json="$query_params_json${spacers[t2]}\"$key\":${spacers[sp]}${params[$key]},${spacers[nl]}"
+        for key in "${!params[@]}"; do
+            query_params_json="${query_params_json}${spacers[t2]}\"${key}\":${spacers[sp]}${params[${key}]},${spacers[nl]}"
         done
 
         echo -n "${query_params_json%,${spacers[nl]}}${spacers[nl]}${spacers[t1]}}"
     fi
 }
 
-# USAGE: list_directory_contents <directory path>
+
+#######################################
+# Prints a directory listing page of the given directory path
+# Globals:
+#   SERVER
+#   loopback_address
+#   port
+# Arguments:
+#   directory path
+# Outputs:
+#   HTML document that lists all the directory contents of the given path
+#######################################
 list_directory_contents() {
-    items=`ls -qgohApN --group-directories-first --time-style=long-iso "$1" | 
-    sed -E '
+    items=`ls -qgohApN --group-directories-first --time-style=long-iso "$1" \
+        | sed -E '
     # delete the first line that outputs the total
     1d;
 
-    # deletes files that are anything other than regular-files or directories (e.g. pipe files)
+    # deletes files that are anything other than regular-files or directories (e.g. named-pipe/fifo files)
     /^[^d-]/d;
 
     # replace all the quotation marks with its equivalent html-symbol-entity: &quot;
     s/"/\&quot;/g;
     
-    # if the entry ends with a slash(/) then it is a directory
+    # if the entry ends with a slash(/) then it is an entry of a directory
     /\/$/{
-        # format all the directorie/folder entries as an html-table row with the folder icon
+        # format all the directorie/folder entries as an html-table row with class="directory" to have a folder icon shown
         s/[^ ]+ +[^ ]+ +([^ ]+) +([^ ]+) +([^ ]+) +(.+)\//<tr class="directory"><td><a href="\4\/">\4\/<\/a><\/td><td>\2 \3<\/td><td><\/td><\/tr>/;
 
         # stop processing the script any further and move on with the new entry/line
         b
     };
 
-    # format all the file entries as an html-table row with the file icon
+    # format all the file entries as an html-table row with class="file" to have a file icon shown
     s/[^ ]+ +[^ ]+ +([^ ]+) +([^ ]+) +([^ ]+) +(.+)/<tr class="file"><td><a href="\4">\4<\/a><\/td><td>\2 \3<\/td><td>\1<\/td><\/tr>/
     '`
 
@@ -156,21 +175,29 @@ list_directory_contents() {
                 </tr>
             </thead>
             <tbody>
-`[ "$1" != "./" ] && echo '<tr class="parent"><td><a href="../">Parent Directory</a></td><td></td><td></td></tr>'`
-$items
+<!-- if it is a sub-directory then also show a link to the parent directory -->
+`[[ "$1" != "./" ]] && echo '<tr class="parent"><td><a href="../">Parent Directory</a></td><td></td><td></td></tr>'`
+${items}
             </tbody>
         </table>
         <hr>
-        <footer><p><i>$SERVER (`uname -o`) Netcat/`nc -V | sed 's/.* //; q'` Server at $loopback_address Port $port</i></p></footer>
+        <footer><p><i>${SERVER} (`uname -o`) Netcat/`nc -V | sed 's/.* //; q'` Server at ${loopback_address} Port ${port}</i></p></footer>
     </body>
 </html>
 EOF
 }
 
-# this function performs the same operation as does the `decodeURI` function in JavaScript
+
+#######################################
+# Parses the raw request URL and performs percent-decoding on it.
+# This function performs the same operation as does the `decodeURI` function in JavaScript
 # (https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/decodeURI)
 # Algorithm source: https://en.wikipedia.org/wiki/UTF-8#Encoding
-# USAGE: url_decode <raw request url>
+# Arguments:
+#   raw request URL
+# Outputs:
+#   The decoded URL
+#######################################
 url_decode() {
     declare -A hex_to_bin=(
         [0]=0000
@@ -215,22 +242,19 @@ url_decode() {
 
     # breaking the URL into parts at every occurence of a '%' symbol
     # i.e. 'abc%12' is converted into 'abc\n%12'
-    for part in ${1//%/$'\n'%}
-    do
+    for part in ${1//%/$'\n'%}; do
         # if the first 3 letters of a `part` does not contain a '%' symbol followed by 2 hexadecimal digits
-        # then simply concat the `part` to the `decoded_url` variable else actually decode the part
-        if (! [[ "${part:0:3}" =~ %[0-9A-F][0-9A-F] ]])
-        then
-            decoded_url="$decoded_url$part"
+        # then simply concat the `part` to the `decoded_url` variable otherwise actually decode the `part`
+        if (! [[ "${part:0:3}" =~ %[0-9A-F][0-9A-F] ]]); then
+            decoded_url="${decoded_url}${part}"
             continue
         fi
         # else: Decoding the `part` from here onwards
 
-        # concatenating the binary representation of the 2 hexadecimal digits of the `part` variable
+        # concatenating the binary representation of the 2 hexadecimal digits from the `part` variable
         bin_byte="${hex_to_bin[${part:1:1}]}${hex_to_bin[${part:2:1}]}"
 
-        if [ $expected -le 0 ]
-        then
+        if (( expected <= 0 )); then
             bin_byte="${bin_byte#1*0}"
             byte_length=${#bin_byte}
 
@@ -243,59 +267,80 @@ url_decode() {
             expected=$(( --expected ))
         fi
 
-        bin_code_point="$bin_code_point$bin_byte"
+        bin_code_point="${bin_code_point}${bin_byte}"
 
-        if [ $expected -le 0 ]
-        then
+        if (( expected <= 0 )); then
             code_point=
 
             # prepending 4 zeroes to account for the last remaining non-4-digit binary value(if any exists)
-            bin_code_point="0000$bin_code_point"
+            bin_code_point="0000${bin_code_point}"
             
-            while [ ${#bin_code_point} -ge 4 ]
-            do
+            while (( ${#bin_code_point} >= 4 )); do
                 # extracting the last 4 binary digits(nibble) from `bin_code_point`
                 nibble="${bin_code_point: -4}"
-                bin_code_point="${bin_code_point%$nibble}"
+                bin_code_point="${bin_code_point%${nibble}}"
 
                 # concatenating the hexadecimal representation of each binary-nibble to form a unicode-codepoint
-                code_point="${bin_to_hex[$nibble]}$code_point"
+                code_point="${bin_to_hex[${nibble}]}${code_point}"
             done
 
             # converting the unicode code-point into a 4-digit value if it isn't already a 4-digit value
-            code_point="0000$code_point"
+            code_point="0000${code_point}"
 
             # concatenating the 4 digits of the unicode code point and the remaining characters from `part`
-            decoded_url="$decoded_url\u${code_point: -4}${part:3}"
+            decoded_url="${decoded_url}\u${code_point: -4}${part:3}"
             bin_code_point=
         fi
     done
 
-    echo -en "$decoded_url"
+    echo -en "${decoded_url}"
 }
 
-# USAGE: obtain_mime <file path>
+
+#######################################
+# Determines the mime-type of the file in the given file path
+# Globals:
+#   MIMES
+# Arguments:
+#   file path
+# Outputs:
+#   The potential mime-type of the given file
+#######################################
 obtain_mime() {
     filename="${1##*/}"
     extension="${filename##*.}"
 
     # if there is no file-extension then simply return 'application/octet-stream'
-    [ "$filename" = "$extension" ] && echo -n "application/octet-stream" && return
+    [[ "${filename}" == "${extension}" ]] && echo -n "application/octet-stream" && return
     
     # find the mime type from the list of available mime-types
-    potential_mime=`grep -Pm 1 "[=,]$extension(,|$)" <<<"$mimes" | cut -d'=' -f1`
+    potential_mime=`grep -Pm 1 "[=,]${extension}(,|$)" <<<"${MIMES}" | cut -d'=' -f1`
     
     # if no mime-type found then simply return 'application/octet-stream'
-    ([ -z "$potential_mime" ] || [ "$potential_mime" = "" ] || [ ${#potential_mime} -eq 0 ]) && echo -n "application/octet-stream" && return
+    ([[ -z "${potential_mime}" ]] || [[ "${potential_mime}" == "" ]] || (( ${#potential_mime} == 0 ))) && echo -n "application/octet-stream" && return
 
     # else return the found mime
-    echo -n "$potential_mime"
+    echo -n "${potential_mime}"
 }
 
-# USAGE: show_error_page <http status code> <message> <information>
+
+#######################################
+# Displays a standard error page for all types of error occured
+# Globals:
+#   STATUS_CODES
+#   SERVER
+#   loopback_address
+#   port
+# Arguments:
+#   http status code
+#   error message
+#   optional information about the error
+# Outputs:
+#   HTML document that displays the error page with an error message and more information about it
+#######################################
 show_error_page() {
     code=$1
-    status="${status_codes[$(( code % 256 ))]}"
+    status="${STATUS_CODES[$(( code % 256 ))]}"
     cat <<EOF
 <!DOCTYPE html>
 <html>
@@ -303,13 +348,13 @@ show_error_page() {
         <meta charset="utf-8">
         <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
         <meta http-equiv="X-UA-Compatible" content="IE=edge">
-        <title>Error $status</title>
+        <title>Error ${status}</title>
     </head>
     <body>
-        <h1>${status#* }</h1>
+        <h1>${status#$1 }</h1>
         <hr>
         <p>
-        Error code: <strong>$code</strong>
+        Error code: <strong>${code}</strong>
         <br>
         Message: <strong>$2</strong>
         <br>
@@ -317,18 +362,22 @@ show_error_page() {
         $3
         </p>
         <hr>
-        <footer><p><i>$SERVER (`uname -o`) Netcat/`nc -V | sed 's/.* //; q'` Server at $loopback_address Port $port</i></p></footer>
+        <footer><p><i>${SERVER} (`uname -o`) Netcat/`nc -V | sed 's/.* //; q'` Server at ${loopback_address} Port ${port}</i></p></footer>
     </body>
 </html>
 EOF
 }
 
-# USAGE: file_not_found_page <resource/file path>
-file_not_found_page() {
-    show_error_page 404 "File Not Found" "The requested resource at URL <strong>${1:1}</strong> was not found on this server."
-}
 
-# USAGE: unsupported_method_response <http method>
+#######################################
+# Produces a response for when the HTTP method is invalid or not supported (501)
+# Arguments:
+#   HTTP method name
+# Outputs:
+#   HTTP response that displays the 501 error page with proper response headers
+# Returns:
+#   501
+#######################################
 unsupported_method_response() {
     content="`show_error_page 501 "\"$1\" Method Not Implemented" 'The server does not support this method.'`"
 
@@ -336,93 +385,117 @@ unsupported_method_response() {
 Content-type: text/html
 Content-Length: ${#content}
 
-$content
+${content}
 EOF
     return 501
 }
 
-# USAGE: serve_static <resource url>
+
+#######################################
+# Serves static file from the file system as an HTTP response
+# Arguments:
+#   resource URL
+# Outputs:
+#   HTTP response that serves static file from the resource URL with proper response headers
+# Returns:
+#   200 if the static content exists in the filesystem otherwise 404
+#######################################
 serve_static() {
-    if [ -f "$1" ] && [ -r "$1" ]
-    then
+    # if the resource path is a regular readable file that exists in the file system then simply serve it
+    if [[ -f "$1" ]] && [[ -r "$1" ]]; then
         echo "Content-type:" `obtain_mime "$1"`
         echo "Content-Length:" `wc --bytes < "$1"`
         echo "Last-Modified:" `stat -c @%Y "$1" | xargs date --utc +'%a, %d %b %Y %T GMT' -d`
         echo
         cat "$1"
-    elif [ -d "$1" ]
-    then
+    
+    # else if the resource path is a directory and not a file path in the file system
+    elif [[ -d "$1" ]]; then
         echo "Content-type: text/html"
 
-        if [ -f "${1%/}/index.html" ]
-        then
+        # if the directory contains the default 'index.html' or 'index.htm' file then serve it
+        # otherwise just list all the directory contents in that directory
+        if [[ -f "${1%/}/index.html" ]]; then
             echo "Content-Length:" `wc --bytes < "${1%/}"/index.html`
             echo
             cat "${1%/}"/index.html
-        elif [ -f "${1%/}/index.htm" ]
-        then
+        elif [[ -f "${1%/}/index.htm" ]]; then
             echo "Content-Length:" `wc --bytes < "${1%/}"/index.htm`
             echo
             cat "${1%/}"/index.htm
         else
             content=`list_directory_contents "$1"`
-            echo "Content-Length:" `wc --bytes <<<"$content"`
-            echo -e "\n$content"
+            echo "Content-Length:" `wc --bytes <<<"${content}"`
+            echo -e "\n${content}"
         fi
+
+    # if none of the above is true then serve a 404 error page
     else
-        content=`file_not_found_page "$1"`
+        content=`show_error_page 404 "File Not Found" "The requested resource at URL <strong>${1:1}</strong> was not found on this server."`
         echo "Content-type: text/html"
-        echo "Content-Length:" `wc --bytes <<<"$content"`
-        echo -e "\n$content"
+        echo "Content-Length:" `wc --bytes <<<"${content}"`
+        echo -e "\n${content}"
         return 404
     fi
     return 200
 }
 
+
+#######################################
+# Handles all the HTTP requests and returns a suitable HTTP response to the server and logs the action
+# Globals:
+#   SERVER
+#   is_cgi
+#   STATUS_CODES
+#   SERVER_DIR
+#   stay_quiet
+#   LOG_PREFIX
+# Outputs:
+#   An HTTP response with all the headers to the listening server process, and
+#   A log entry to stdout
+#######################################
 request_handler() {
     read method raw_path protocol
 
     # cleaning up the protocol value from any trailing carriage return ('\r') symbols
-    protocol=${protocol%%$'\r'}
-    fs_path=.`url_decode "$raw_path"`
+    protocol="${protocol%%$'\r'}"
+    fs_path=".`url_decode "${raw_path}"`"
 
-    response_file="`mktemp --tmpdir="$SERVER_DIR" responseXXXXXXXXXX`"
+    response_file="`mktemp --tmpdir="${SERVER_DIR}" responseXXXXXXXXXX`"
 
     # adding common headers
-    cat <<EOF > "$response_file"
-Server: $SERVER
+    cat <<EOF > "${response_file}"
+Server: ${SERVER}
 Date: `date --utc +'%a, %d %b %Y %T GMT'`
 Connection: close
 EOF
 
-    if [ $is_cgi -eq 0 ]
-    then
-        if [ "$method" = "GET" ]
-        then
-            serve_static "${fs_path%%\?*}" >> "$response_file"
+    if (( is_cgi == 0 )); then
+        if [[ "${method}" == "GET" ]]; then
+            serve_static "${fs_path%%\?*}" >> "${response_file}"
         else
-            unsupported_method_response "$method" >> "$response_file"
+            unsupported_method_response "${method}" >> "${response_file}"
         fi
     else
-        query_params=`parse_query_params "$fs_path"`
+        query_params="`parse_query_params "${fs_path}"`"
         # removing the query parameters (if it exists) from the path otherwise setting it to an empty object
-        [ ${#query_params} -gt 0 ] && fs_path="${fs_path%%\?*}" || query_params='{}'
+        (( ${#query_params} > 0 )) && fs_path="${fs_path%%\?*}" || query_params='{}'
 
-        request_headers=`parse_headers`
+        request_headers="`parse_headers`"
 
         # call the script here
     fi
-    # ([ "$method" = "GET" ] && serve_static "$fs_path" || unsupported_method_response "$method") >> "$response_file"
+    # ([[ "${method}" == "GET" ]] && serve_static "${fs_path}" || unsupported_method_response "${method}") >> "${response_file}"
     response_status=$?
 
     # sending the HTTP version header along with the whole response
-    echo "HTTP/1.0 ${status_codes[$response_status]}" | cat - "$response_file" > "$SERVER_DIR"/http_response
+    echo "HTTP/1.0 ${STATUS_CODES[${response_status}]}" | cat - "${response_file}" > "${SERVER_DIR}"/http_response
 
-    response_size=`wc --bytes < "$response_file"`
-    rm -f "$response_file"
+    response_size=`wc --bytes < "${response_file}"`
+    rm -f "${response_file}"
 
     # logfile format inspired by https://github.com/python/cpython/blob/main/Lib/http/server.py#L58,L78
-    [ $stay_quiet -eq 0 ] && printf '%s [%s %s] "%s %s %s" %d %d\n' "$log_prefix" `date +"%d/%b/%Y %T"` "$method" "$raw_path" "$protocol" "${status_codes[$response_status]%% *}" ${response_size:--}
+    (( stay_quiet == 0 )) && printf '%s [%s %s] "%s %s %s" %d %s\n' "${LOG_PREFIX}" `date +"%d/%b/%Y %T"` "${method}" "${raw_path}" "${protocol}" "${STATUS_CODES[${response_status}]%% *}" ${response_size:--}
 }
 
 # defining the CommandLine Interface options and flags
@@ -431,7 +504,7 @@ TEMP=`getopt --options 'hb:cd:qt:' --long 'help,bind:,compact,directory:,quiet,t
 
 [ $? -ne 0 ] && echo "USAGE: $0 [-h | --help] [-b ADDRESS | --bind=ADDRESS] [-c | --compact] [-d DIRECTORY | --directory=DIRECTORY] [-q | --quiet] [-t WIDTH | --tab-width=WIDTH] [PORT]" >&2 && exit 1
 
-eval set -- "$TEMP"
+eval set -- "${TEMP}"
 unset TEMP
 
 # initializing variables that are relevant for running the server
@@ -442,8 +515,10 @@ declare -A spacers=(
 
 # source: https://en.wikipedia.org/wiki/List_of_HTTP_status_codes
 # the keys are the 8 least-significant-bits of the status code
-# or you can say, key = status_code % 256
-declare -A status_codes=(
+# or can be said, key = status_code % 256
+# because the return command works that way,
+# source: https://www.man7.org/linux/man-pages/man1/bash.1.html#:~:text=If%20n%20is%20supplied,8%20bits
+declare -A STATUS_CODES=(
     [8]="520 Web Server Returned an Unknown Error"
     [9]="521 Web Server Is Down"
     [10]="522 Connection Timed Out"
@@ -556,13 +631,13 @@ tab_width=2
 addr=
 
 while true; do
-    case $1 in
+    case "$1" in
         "-h"|"--help")
             indent="        `printf "%${#0}.s"`"
             cat <<EOF
 USAGE: $0 [-h | --help] [-b ADDRESS | --bind=ADDRESS] [-c | --compact]
-$indent[-d DIRECTORY | --directory=DIRECTORY] [-q | --quiet]
-$indent[-t WIDTH | --tab-width=WIDTH] [PORT]
+${indent}[-d DIRECTORY | --directory=DIRECTORY] [-q | --quiet]
+${indent}[-t WIDTH | --tab-width=WIDTH] [PORT]
 
 positional arguments:
   PORT                  use PORT as a port to listen on (default: 4000)
@@ -576,7 +651,8 @@ options:
                         user DIRECTORY as an alternate directory to start the HTTP server from
                         (default: current directory)
   -q, --quiet           start the server but do not print any logs to stdout. Use it twice to
-                        also suppress printing of any errors to stderr
+                        also suppress printing of any errors to stderr. Using it thrice does
+                        not affect anymore.
   -t WIDTH, --tab-width=WIDTH
                         JSON data formatted with an indentation of WIDTH spaces will be
                         outputted. This option will take not effect on the output if used
@@ -593,14 +669,15 @@ EOF
             continue
         ;;
         "-d"|"--directory")
-            [ -d "$2" ] && cd "$2"
+            [[ -d "$2" ]] && cd "$2"
 
             shift 2
             continue
         ;;
         "-t"|"--tab-width")
             # this flag will not work if --compact is already defined or if non-integer input is given
-            [ $tab_width -gt 0 ] && [ "${2//[[:digit:]]}" = "" ] && tab_width=$2
+            (( tab_width > 0 )) && [[ "${2//[[:digit:]]}" == "" ]] && tab_width=$2
+            # (( tab_width > 0 )) && (! [[ "$2" =~ [^0-9] ]]) && tab_width=$2
             shift 2
             continue
         ;;
@@ -608,12 +685,12 @@ EOF
             addr=`sed -E '/^([0-9]+\.){3}[0-9]+$/{s/\.0+([1-9])/.\1/g; q;}; s/.*/0/;' <<<"$2"`
 
             # checking if the provided address contains 4 integers seperated by period ('.')
-            [ "$addr" = "0" ] && echo "$0: provided bind IP address is not in a valid format: $2" >&2 && exit 1
+            [[ "${addr}" == "0" ]] && echo "$0: provided bind IP address is not in a valid format: $2" >&2 && exit 1
 
             # checking if the address is a valid IPv4 address by checking if each number lies in the range [0, 255]
-            is_valid=`sed -E 's/[0-9]+/& >= 0 \&\& & < 256/g; s/\./ \&\& /g' <<<"$addr" | bc`
+            is_valid=`sed -E 's/[0-9]+/& >= 0 \&\& & < 256/g; s/\./ \&\& /g' <<<"${addr}" | bc`
 
-            [ $is_valid -eq 0 ] && echo "$0: provided bind IP address is not a valid IPv4 address: $2" >&2 && exit 1
+            (( is_valid == 0 )) && echo "$0: provided bind IP address is not a valid IPv4 address: $2" >&2 && exit 1
             
             shift 2
             continue
@@ -623,7 +700,7 @@ EOF
             stay_quiet=$((stay_quiet + 1))
 
             # max incrementable value is 2
-            [ $stay_quiet -gt 2 ] && stay_quiet=2
+            (( stay_quiet > 2 )) && stay_quiet=2
 
             shift
             continue
@@ -640,30 +717,42 @@ EOF
 done
 
 # adding different levelled (3 levels only) indentation-tabs to the `spacers` array
-for i in {1..3}
-do
-    spacers["t$i"]="`seq $i | xargs printf "%$tab_width.s" 2> /dev/null`"
+for i in {1..3}; do
+    spacers["t${i}"]="`seq ${i} | xargs printf "%${tab_width}.s" 2> /dev/null`"
 done
 
 port=${1:-4000}
 # checking if port number is a digit and if it is in a valid range of [0-65535]
-! ((! [[ "$port" =~ [^0-9] ]]) && [ $port -ge 0 ] && [ $port -lt 65536 ]) && echo "$0: invalid port number provided: $1" >&2 && exit 1
+! ((! [[ "${port}" =~ [^0-9] ]]) && (( port >= 0 )) && (( port < 65536 ))) && echo "$0: invalid port number provided: $1" >&2 && exit 1
 
 # fetching loopback address to use in the logfile output
-loopback_address=`ip -br address | grep ^lo | grep -Po '(\d+\.){3}\d+'`
+loopback_address="`ip -br address | grep ^lo | grep -Po '(\d+\.){3}\d+'`"
 loopback_address=${loopback_address:-127.0.0.1}
 
 # generating the prefix string to output as logs
-log_prefix="$loopback_address `command -p identd 2> /dev/null || echo -` `[ $EUID -eq $(id -u) ] && echo - || id -nu`"
+readonly LOG_PREFIX="${loopback_address} `command -p identd 2> /dev/null || echo -` `(( EUID == $(id -u) )) && echo - || id -nu`"
 
-[ $stay_quiet -eq 0 ] && echo -e "Listening on port $port (http://${addr:-0.0.0.0}:$port/)...\n"
+(( stay_quiet == 0 )) && echo -e "Listening on port ${port} (http://${addr:-0.0.0.0}:${port}/)...\n"
 
-addr=${addr:+--source=$addr}
+addr="${addr:+--source=${addr}}"
 
 # Loading all the file-mime-types there can possibly be.
 # The following list was generated through the undermentioned one-liner:
-# wget --output-document=- https://cdn.jsdelivr.net/npm/mime-db/db.json | sed -En '/^    "extensions": \[/{s/.+\["|"\],?//g; s/", ?"/,/g; x; G; s/\n/=/; p}; /^  "/{s/^  "([^"]+)".+/\1/; h}'
-mimes='application/andrew-inset=ez
+# wget --output-document=- https://cdn.jsdelivr.net/npm/mime-db/db.json |
+# sed -En '
+# /^    "extensions": \[/{
+#     s/.+\["|"\],?//g;
+#     s/", ?"/,/g;
+#     x;
+#     G;
+#     s/\n/=/;
+#     p
+# };
+# /^  "/{
+#     s/^  "([^"]+)".+/\1/;
+#     h
+# }'
+readonly MIMES='application/andrew-inset=ez
 application/applixware=aw
 application/atom+xml=atom
 application/atomcat+xml=atomcat
@@ -1630,11 +1719,11 @@ video/x-smv=smv
 x-conference/x-cooltalk=ice'
 
 # making a temporary directory for storing intermediate files
-SERVER_DIR="`mktemp --directory http_serverXXX --tmpdir`"
+readonly SERVER_DIR="`mktemp --directory http_serverXXX --tmpdir`"
 
 # making a named pipe file if not already created, for sending responses
-[ -p "$SERVER_DIR"/http_response ] || mkfifo "$SERVER_DIR"/http_response
-# [ -p "$SERVER_DIR"/http_response* ] || mktemp --dry-run --tmpdir="$SERVER_DIR" http_responseXXX | xargs mkfifo # creates a new and most likely a unique pipe which is not needed
+[[ -p "${SERVER_DIR}"/http_response ]] || mkfifo "${SERVER_DIR}"/http_response
+# [[ -p "${SERVER_DIR}"/http_response* ]] || mktemp --dry-run --tmpdir="${SERVER_DIR}" http_responseXXX | xargs mkfifo # creates a new and most likely a unique pipe which is not needed
 
 keep_running=1
 is_cgi=0
@@ -1644,12 +1733,12 @@ cleanup() {
     keep_running=0
 
     # finding the netcat process and abruptly killing it, hence killing the server
-    pkill -SIGTERM -fx "nc --listen --local-port=$port${addr:+ $addr}"
+    pkill -SIGTERM -fx "nc --listen --local-port=${port}${addr:+ ${addr}}"
 
     # removing the temporary server directory from the file system
-    rm -rf "$SERVER_DIR"
+    rm -rf "${SERVER_DIR}"
     
-    [ $stay_quiet -eq 0 ] && echo -e "\r   \nKeyboard interrupt received, stopping the server."
+    (( stay_quiet == 0 )) && echo -e "\r   \nKeyboard interrupt received, stopping the server."
     exit 0
 }
 
@@ -1657,7 +1746,8 @@ cleanup() {
 trap cleanup SIGINT SIGTERM
 
 # start the server indefinitely unless termination signals are trapped
-while [ $keep_running -eq 1 ]
-do
-    cat "$SERVER_DIR"/http_response | nc --listen --local-port=$port $addr | request_handler
+while (( keep_running == 1 )); do
+    cat "${SERVER_DIR}"/http_response \
+        | nc --listen --local-port=${port} ${addr} \
+        | request_handler
 done
