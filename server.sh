@@ -264,7 +264,7 @@ url_decode() {
             bin_byte="${bin_byte#10}"
 
             # decrementing the number of expected bytes before processing each part
-            expected=$(( --expected ))
+            (( --expected ))
         fi
 
         bin_code_point="${bin_code_point}${bin_byte}"
@@ -450,6 +450,8 @@ serve_static() {
 #   SERVER_DIR
 #   stay_quiet
 #   LOG_PREFIX
+# Arguments:
+#   temporary response filename without extension/suffix
 # Outputs:
 #   An HTTP response with all the headers to the listening server process, and
 #   A log entry to stdout
@@ -461,10 +463,8 @@ request_handler() {
     protocol="${protocol%%$'\r'}"
     fs_path=".`url_decode "${raw_path}"`"
 
-    response_file="`mktemp --tmpdir="${SERVER_DIR}" responseXXXXXXXXXX`"
-
     # adding common headers
-    cat <<EOF > "${response_file}"
+    cat <<EOF > "$1.http"
 Server: ${SERVER}
 Date: `date --utc +'%a, %d %b %Y %T GMT'`
 Connection: close
@@ -472,9 +472,9 @@ EOF
 
     if (( is_cgi == 0 )); then
         if [[ "${method}" == "GET" ]]; then
-            serve_static "${fs_path%%\?*}" >> "${response_file}"
+            serve_static "${fs_path%%\?*}" >> "$1.http"
         else
-            unsupported_method_response "${method}" >> "${response_file}"
+            unsupported_method_response "${method}" >> "$1.http"
         fi
     else
         query_params="`parse_query_params "${fs_path}"`"
@@ -485,14 +485,14 @@ EOF
 
         # call the script here
     fi
-    # ([[ "${method}" == "GET" ]] && serve_static "${fs_path}" || unsupported_method_response "${method}") >> "${response_file}"
+    # ([[ "${method}" == "GET" ]] && serve_static "${fs_path}" || unsupported_method_response "${method}") >> "$1.http"
     response_status=$?
 
     # sending the HTTP version header along with the whole response
-    echo "HTTP/1.0 ${STATUS_CODES[${response_status}]}" | cat - "${response_file}" > "${SERVER_DIR}"/http_response
+    echo "HTTP/1.0 ${STATUS_CODES[${response_status}]}" | cat - "$1.http" > "$1.pipe"
 
-    response_size=`wc --bytes < "${response_file}"`
-    rm -f "${response_file}"
+    response_size=`wc --bytes < "$1.http"`
+    rm -f "$1.http" "$1.pipe" #"$1".+(http|pipe)
 
     # logfile format inspired by https://github.com/python/cpython/blob/main/Lib/http/server.py#L58,L78
     (( stay_quiet == 0 )) && printf '%s [%s %s] "%s %s %s" %d %s\n' "${LOG_PREFIX}" `date +"%d/%b/%Y %T"` "${method}" "${raw_path}" "${protocol}" "${STATUS_CODES[${response_status}]%% *}" ${response_size:--}
@@ -697,7 +697,7 @@ EOF
         ;;
         "-q"|"--quiet")
             # defining the logging level by incrementing the `stay_quiet` value, everytime this flag is called
-            stay_quiet=$((stay_quiet + 1))
+            ((stay_quiet += 1))
 
             # max incrementable value is 2
             (( stay_quiet > 2 )) && stay_quiet=2
@@ -1721,10 +1721,6 @@ x-conference/x-cooltalk=ice'
 # making a temporary directory for storing intermediate files
 readonly SERVER_DIR="`mktemp --directory http_serverXXX --tmpdir`"
 
-# making a named pipe file if not already created, for sending responses
-[[ -p "${SERVER_DIR}"/http_response ]] || mkfifo "${SERVER_DIR}"/http_response
-# [[ -p "${SERVER_DIR}"/http_response* ]] || mktemp --dry-run --tmpdir="${SERVER_DIR}" http_responseXXX | xargs mkfifo # creates a new and most likely a unique pipe which is not needed
-
 keep_running=1
 is_cgi=0
 
@@ -1747,7 +1743,19 @@ trap cleanup SIGINT SIGTERM
 
 # start the server indefinitely unless termination signals are trapped
 while (( keep_running == 1 )); do
-    cat "${SERVER_DIR}"/http_response \
-        | nc --listen --local-port=${port} ${addr} \
-        | request_handler
+
+    # this creates a new and most likely a unique name for the response pipe
+    response="`mktemp --suffix=.http --tmpdir="${SERVER_DIR}" responseXXXXXXXXXX`"
+    response="${response%.http}"
+
+    # making a named pipe file for backpropogating the response to the server process
+    mkfifo "${response}.pipe"
+
+    read proxy_port < <(
+        cat "${response}.pipe" \
+            | nc -vvl 2> >( grep -m1 -o [[:digit:]]* ) 1> >( request_handler "${response}" )
+    )
+
+    nc --tunnel="127.0.0.1:${proxy_port}" --local-port=${port} ${addr}
+
 done
